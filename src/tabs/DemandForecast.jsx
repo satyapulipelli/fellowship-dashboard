@@ -233,6 +233,11 @@ function KpiCard({ label, value, tip }) {
 
 function DemandCapacityChart({ rows }) {
   if (!rows.length) return <Empty>No data</Empty>
+
+  const capColors = rows.map((r) =>
+    (r.weighted_demand ?? 0) > (r.capacity ?? 0) ? SEMANTIC.bad : CHROME.gray200,
+  )
+
   return (
     <PlotlyChart
       data={[
@@ -249,7 +254,7 @@ function DemandCapacityChart({ rows }) {
           y: rows.map((r) => r.capacity ?? 0),
           name: 'Capacity',
           type: 'bar',
-          marker: { color: CHROME.gray200 },
+          marker: { color: capColors },
           hovertemplate: '%{x}: %{y:.0f}<extra>Capacity</extra>',
         },
       ]}
