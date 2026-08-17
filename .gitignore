@@ -1,0 +1,17 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Intermediate generator output — full student pathways and section-level rows.
+# Regenerate with scripts/generate_mock_data.py; never shipped to the browser.
+scripts/intermediate/
+
+# Node / Vite (Phase 2)
+node_modules/
+dist/
+.vite/
+*.local
+
+# macOS
+.DS_Store

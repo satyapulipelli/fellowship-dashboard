@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Course Dependency &amp; Program Analytics — Pacific Ridge University</title>
+    <meta
+      name="description"
+      content="Curriculum structure and enrollment analytics dashboard. A public rebuild of a university registrar fellowship project, running on synthetic data."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Lato, as the original used -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap"
+    />
+    <!-- The 14 data files are fetched on demand; warm the connection for the two the
+         shell always needs. -->
+    <link rel="preload" as="fetch" href="/data/summary_stats.json" crossorigin />
+    <link rel="preload" as="fetch" href="/data/terms.json" crossorigin />
+  </head>
+  <body>
+    <script>globalThis.global = globalThis;</script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
