@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useData } from '../hooks/useData'
 import { Card, Skeleton, ErrorState, Empty } from '../components/shared/States'
 import PlotlyChart from '../components/charts/PlotlyChart'
@@ -163,9 +163,9 @@ function RedundancyInner({ pairs, courses, scores, programs, filters, threshold,
               </div>
               <div>
                 <p className="legend-title">Interaction</p>
-                <p className="text-[0.72rem] text-nu-gray-700 py-0.5">Hover over nodes for course details</p>
-                <p className="text-[0.72rem] text-nu-gray-700 py-0.5">Hover over lines for similarity scores</p>
-                <p className="text-[0.72rem] text-nu-gray-700 py-0.5">Drag to pan, scroll to zoom</p>
+                <p className="text-[0.72rem] text-nu-gray-700 py-0.5">Hover a node to highlight its pair</p>
+                <p className="text-[0.72rem] text-nu-gray-700 py-0.5">Click a node to lock the highlight</p>
+                <p className="text-[0.72rem] text-nu-gray-700 py-0.5">Click again to clear selection</p>
               </div>
             </div>
           </details>
@@ -238,7 +238,12 @@ function RedundancyInner({ pairs, courses, scores, programs, filters, threshold,
 }
 
 function SubstituteNetwork({ substitutes, courses, scores }) {
-  const { nodes, edgeTraces } = useMemo(() => {
+  const [selectedNode, setSelectedNode] = useState(null)
+  const [hoveredNode, setHoveredNode] = useState(null)
+
+  const activeNode = selectedNode || hoveredNode
+
+  const graph = useMemo(() => {
     const bottlenecks = [...substitutes.keys()]
     const allSubs = new Set()
     const edges = []
@@ -249,24 +254,6 @@ function SubstituteNetwork({ substitutes, courses, scores }) {
       }
     }
 
-    const bX = []
-    const bY = []
-    const bText = []
-    const bHover = []
-    bottlenecks.forEach((b, i) => {
-      bX.push(0)
-      bY.push(i)
-      bText.push(b)
-      const c = courses[b] || {}
-      let h = `<b>BOTTLENECK: ${b}</b>`
-      h += `<br>${c.title || ''}`
-      h += `<br>Centrality: ${num(scores[b], 3)}`
-      h += `<br>Unlocks: ${c.out_degree ?? 0} courses`
-      h += `<br>Prerequisites: ${c.in_degree ?? 0}`
-      h += `<br><br>Has ${(substitutes.get(b) || []).length} similar course(s)`
-      bHover.push(h)
-    })
-
     const allSubInfo = new Map()
     for (const subs of substitutes.values()) {
       for (const s of subs) {
@@ -276,15 +263,23 @@ function SubstituteNetwork({ substitutes, courses, scores }) {
     }
 
     const subsArr = [...allSubs].sort()
-    const sX = []
-    const sY = []
-    const sText = []
-    const sHover = []
-    const sColors = []
-    subsArr.forEach((s, i) => {
-      sX.push(300)
-      sY.push(i * (bottlenecks.length / Math.max(subsArr.length, 1)))
-      sText.push(s)
+    const yScale = bottlenecks.length / Math.max(subsArr.length, 1)
+
+    const bPositions = bottlenecks.map((b, i) => ({ code: b, x: 0, y: i }))
+    const sPositions = subsArr.map((s, i) => ({ code: s, x: 300, y: i * yScale }))
+
+    const bHovers = bottlenecks.map((b) => {
+      const c = courses[b] || {}
+      let h = `<b>BOTTLENECK: ${b}</b>`
+      h += `<br>${c.title || ''}`
+      h += `<br>Centrality: ${num(scores[b], 3)}`
+      h += `<br>Unlocks: ${c.out_degree ?? 0} courses`
+      h += `<br>Prerequisites: ${c.in_degree ?? 0}`
+      h += `<br><br>Has ${(substitutes.get(b) || []).length} similar course(s)`
+      return h
+    })
+
+    const sHovers = subsArr.map((s) => {
       const c = courses[s] || {}
       const subInfo = allSubInfo.get(s)
       let h = `<b>SUBSTITUTE: ${s}</b>`
@@ -292,59 +287,135 @@ function SubstituteNetwork({ substitutes, courses, scores }) {
       if (subInfo) h += `<br>Similarity: ${num(subInfo.similarity, 2)}`
       h += `<br>Unlocks: ${c.out_degree ?? 0} courses`
       h += `<br>Prerequisites: ${c.in_degree ?? 0}`
-      if (subInfo?.is_better_access) {
-        h += '<br><br>✓ Easier access than bottleneck'
-        sColors.push('#22c55e')
-      } else {
-        h += '<br><br>✗ Not easier than bottleneck'
-        sColors.push(SUBSTITUTE.neutral)
-      }
-      sHover.push(h)
+      h += subInfo?.is_better_access
+        ? '<br><br>✓ Easier access than bottleneck'
+        : '<br><br>✗ Not easier than bottleneck'
+      return h
     })
 
-    const bIdx = new Map(bottlenecks.map((b, i) => [b, i]))
-    const sIdx = new Map(subsArr.map((s, i) => [s, i]))
+    const sBaseColors = subsArr.map((s) =>
+      allSubInfo.get(s)?.is_better_access ? '#22c55e' : SUBSTITUTE.neutral,
+    )
 
-    const edgeTraces = edges.map((e) => ({
-      x: [0, 300],
-      y: [bIdx.get(e.source), sIdx.get(e.target) * (bottlenecks.length / Math.max(subsArr.length, 1))],
-      mode: 'lines',
-      type: 'scatter',
-      line: {
-        color: similarityColor(e.similarity),
-        width: 1 + e.similarity,
-      },
-      hoverinfo: 'text',
-      text: `<b>${e.source} → ${e.target}</b><br>Similarity: ${e.similarity.toFixed(2)}<br>${e.better ? '✓ Better access' : '✗ Not easier'}<br>Substitute prereqs: ${courses[e.target]?.in_degree ?? '?'} vs ${courses[e.source]?.in_degree ?? '?'}`,
-      showlegend: false,
-    }))
+    const connectionMap = new Map()
+    edges.forEach((e, i) => {
+      if (!connectionMap.has(e.source)) connectionMap.set(e.source, { edges: new Set(), nodes: new Set() })
+      if (!connectionMap.has(e.target)) connectionMap.set(e.target, { edges: new Set(), nodes: new Set() })
+      connectionMap.get(e.source).edges.add(i)
+      connectionMap.get(e.source).nodes.add(e.target)
+      connectionMap.get(e.target).edges.add(i)
+      connectionMap.get(e.target).nodes.add(e.source)
+    })
 
-    const nodes = [
-      {
-        x: bX, y: bY, text: bText, hovertext: bHover, hoverinfo: 'text',
-        mode: 'markers+text', textposition: 'middle left', textfont: { size: 10 },
+    return { bottlenecks, subsArr, edges, bPositions, sPositions, bHovers, sHovers, sBaseColors, connectionMap, yScale }
+  }, [substitutes, courses, scores])
+
+  const plotData = useMemo(() => {
+    const { bottlenecks, subsArr, edges, bPositions, sPositions, bHovers, sHovers, sBaseColors, connectionMap, yScale } = graph
+
+    const connNodes = activeNode ? new Set([activeNode, ...(connectionMap.get(activeNode)?.nodes || [])]) : null
+    const connEdges = activeNode ? (connectionMap.get(activeNode)?.edges || new Set()) : null
+
+    const edgeTraces = edges.map((e, i) => {
+      const active = !connEdges || connEdges.has(i)
+      return {
+        x: [0, 300],
+        y: [bPositions.find((p) => p.code === e.source).y, sPositions.find((p) => p.code === e.target).y],
+        mode: 'lines',
         type: 'scatter',
-        marker: { color: NODE.bottleneck, size: 10, line: { width: 1, color: CHROME.white } },
+        line: {
+          color: active ? similarityColor(e.similarity) : '#e5e7eb',
+          width: active ? 1 + e.similarity : 0.5,
+        },
+        opacity: active ? 1 : 0.2,
+        hoverinfo: 'text',
+        text: `<b>${e.source} → ${e.target}</b><br>Similarity: ${e.similarity.toFixed(2)}<br>${e.better ? '✓ Better access' : '✗ Not easier'}<br>Substitute prereqs: ${courses[e.target]?.in_degree ?? '?'} vs ${courses[e.source]?.in_degree ?? '?'}`,
+        showlegend: false,
+      }
+    })
+
+    const bActive = bottlenecks.map((b) => !connNodes || connNodes.has(b))
+    const sActive = subsArr.map((s) => !connNodes || connNodes.has(s))
+
+    const nodeTraces = [
+      {
+        x: bPositions.map((p) => p.x),
+        y: bPositions.map((p) => p.y),
+        text: bottlenecks,
+        hovertext: bHovers,
+        hoverinfo: 'text',
+        mode: 'markers+text',
+        textposition: 'middle left',
+        textfont: { size: 10, color: bActive.map((a) => (a ? '#111827' : '#d1d5db')) },
+        type: 'scatter',
+        marker: {
+          color: bActive.map((a) => (a ? NODE.bottleneck : '#d1d5db')),
+          size: bActive.map((a) => (a ? 12 : 8)),
+          line: { width: 1, color: CHROME.white },
+        },
         showlegend: false,
       },
       {
-        x: sX, y: sY, text: sText, hovertext: sHover, hoverinfo: 'text',
-        mode: 'markers+text', textposition: 'middle right', textfont: { size: 10 },
+        x: sPositions.map((p) => p.x),
+        y: sPositions.map((p) => p.y),
+        text: subsArr,
+        hovertext: sHovers,
+        hoverinfo: 'text',
+        mode: 'markers+text',
+        textposition: 'middle right',
+        textfont: { size: 10, color: sActive.map((a) => (a ? '#111827' : '#d1d5db')) },
         type: 'scatter',
-        marker: { color: sColors, size: 8, line: { width: 1, color: CHROME.white } },
+        marker: {
+          color: sActive.map((a, i) => (a ? sBaseColors[i] : '#d1d5db')),
+          size: sActive.map((a) => (a ? 10 : 6)),
+          line: { width: 1, color: CHROME.white },
+        },
         showlegend: false,
       },
     ]
 
-    return { nodes, edgeTraces }
-  }, [substitutes, courses, scores])
+    return [...edgeTraces, ...nodeTraces]
+  }, [graph, activeNode, courses])
+
+  const edgeCount = graph.edges.length
+
+  const onHover = useCallback((event) => {
+    if (selectedNode) return
+    const pt = event.points[0]
+    if (pt.curveNumber >= edgeCount) {
+      const traceIdx = pt.curveNumber - edgeCount
+      const code = traceIdx === 0
+        ? graph.bottlenecks[pt.pointIndex]
+        : graph.subsArr[pt.pointIndex]
+      setHoveredNode(code)
+    }
+  }, [selectedNode, edgeCount, graph.bottlenecks, graph.subsArr])
+
+  const onUnhover = useCallback(() => {
+    if (!selectedNode) setHoveredNode(null)
+  }, [selectedNode])
+
+  const onClick = useCallback((event) => {
+    const pt = event.points[0]
+    if (pt.curveNumber >= edgeCount) {
+      const traceIdx = pt.curveNumber - edgeCount
+      const code = traceIdx === 0
+        ? graph.bottlenecks[pt.pointIndex]
+        : graph.subsArr[pt.pointIndex]
+      setSelectedNode((prev) => (prev === code ? null : code))
+      setHoveredNode(null)
+    } else {
+      setSelectedNode(null)
+      setHoveredNode(null)
+    }
+  }, [edgeCount, graph.bottlenecks, graph.subsArr])
 
   return (
     <Card title="Bottleneck → Substitute Network">
       <div className="flex gap-4">
         <div className="min-w-0 flex-1">
           <PlotlyChart
-            data={[...edgeTraces, ...nodes]}
+            data={plotData}
             layout={{
               xaxis: { visible: false, range: [-80, 380] },
               yaxis: { visible: false, autorange: 'reversed' },
@@ -352,7 +423,15 @@ function SubstituteNetwork({ substitutes, courses, scores }) {
               margin: { l: 8, r: 8, t: 8, b: 8 },
             }}
             height={Math.max(300, substitutes.size * 40)}
+            onClick={onClick}
+            onHover={onHover}
+            onUnhover={onUnhover}
           />
+          {selectedNode && (
+            <p className="mt-1 text-center text-[0.7rem] text-muted">
+              Locked on <span className="font-bold text-nu-gray-900">{selectedNode}</span> — click it again to clear
+            </p>
+          )}
         </div>
         <div className="shrink-0 w-40 rounded border border-nu-gray-200 bg-nu-white px-3 py-2 text-[0.7rem] self-start">
           <p className="font-bold uppercase tracking-wide text-nu-gray-700 mb-1.5">Legend</p>
@@ -375,6 +454,11 @@ function SubstituteNetwork({ substitutes, courses, scores }) {
           <div className="flex items-center gap-1.5 py-0.5">
             <span className="inline-block h-0.5 w-4 rounded shrink-0" style={{ backgroundColor: '#94a3b8' }} />
             <span className="text-nu-gray-700">Lower similarity</span>
+          </div>
+          <div className="mt-1.5 border-t border-nu-gray-100 pt-1.5">
+            <p className="font-bold uppercase tracking-wide text-nu-gray-700 mb-0.5">Interaction</p>
+            <p className="text-nu-gray-700 py-0.5">Hover to highlight pair</p>
+            <p className="text-nu-gray-700 py-0.5">Click to lock selection</p>
           </div>
         </div>
       </div>
