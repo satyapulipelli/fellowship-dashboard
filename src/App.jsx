@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Analytics } from '@vercel/analytics/react'
 import TopBar from './components/Layout/TopBar'
 import Sidebar from './components/Layout/Sidebar'
 import Disclaimer from './components/shared/Disclaimer'
@@ -144,6 +145,7 @@ export default function App() {
           <Disclaimer />
         </main>
       </div>
+      <Analytics />
     </div>
   )
 }
